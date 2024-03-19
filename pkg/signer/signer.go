@@ -10,7 +10,8 @@ import (
 )
 
 type SignerImpl interface {
-	Sign(ctx context.Context, privateKey []byte, data []byte) ([]byte, error)
+	Sign(ctx context.Context, privateKey, data []byte) ([]byte, error)
+	Verify(ctx context.Context, publicKey, signature, data []byte) error
 }
 
 type Signer struct {
@@ -59,6 +60,14 @@ func (s *Signer) Sign(ctx context.Context, data []byte) (*signature.Signature, e
 		SignedData: safeDataToBeSigned,
 		Signature:  base64SignedData,
 	}, nil
+}
+
+func (s *Signer) Verify(ctx context.Context, signature *signature.Signature) error {
+	decodedSignature, err := base64.StdEncoding.DecodeString(signature.Signature)
+	if err != nil {
+		return err
+	}
+	return s.impl.Verify(ctx, []byte(s.device.PublicKey), decodedSignature, signature.SignedData)
 }
 
 func (s *Signer) generateSecuredDataToBeSigned(ctx context.Context, data []byte) []byte {

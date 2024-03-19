@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"errors"
+	"math/big"
 )
 
 type SignerECDSA struct{}
@@ -35,11 +37,52 @@ func (s *SignerECDSA) Sign(ctx context.Context, privateKey []byte, data []byte) 
 		return nil, err
 	}
 
-	// Concatenate R and S into a single byte slice
-	rBytes, sBytes := r.Bytes(), s_.Bytes()
-	signature := make([]byte, 64)
-	copy(signature[32-len(rBytes):32], rBytes)
-	copy(signature[64-len(sBytes):], sBytes)
+	// Encode the signature in ASN.1 DER format
+	signatureBytes, err := asn1.Marshal(struct {
+		R, S *big.Int
+	}{r, s_})
+	if err != nil {
+		return nil, err
+	}
 
-	return signature, nil
+	return signatureBytes, nil
+}
+
+func (s *SignerECDSA) Verify(ctx context.Context, publicKey, signature, data []byte) error {
+	// Decode the PEM-encoded public key
+	block, _ := pem.Decode(publicKey)
+	if block == nil {
+		return errors.New("failed to decode PEM block containing public key")
+	}
+
+	// Parse the public key
+	pubKey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return err
+	}
+
+	// Convert the parsed public key to ECDSA public key type
+	ecPubKey, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		return errors.New("failed to parse ECDSA public key")
+	}
+
+	// Parse the ASN.1 encoded signature
+	var ecdsaSignature struct {
+		R, S *big.Int
+	}
+	_, err = asn1.Unmarshal(signature, &ecdsaSignature)
+	if err != nil {
+		return err
+	}
+
+	// Compute the hash of the data
+	hash := sha256.Sum256(data)
+
+	// Verify the signature
+	if !ecdsa.Verify(ecPubKey, hash[:], ecdsaSignature.R, ecdsaSignature.S) {
+		return errors.New("ECDSA signature verification failed")
+	}
+
+	return nil
 }
